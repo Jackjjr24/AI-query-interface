@@ -1,7 +1,7 @@
 pandas
 python-dotenv
 streamlit
-speech_recognition
+speechrecognition
 pyttsx3
 langchain_core
 langchain_community
