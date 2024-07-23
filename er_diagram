@@ -1,0 +1,49 @@
+digraph {
+	customers [label=customers]
+	customers_customerid [label=customerid shape=ellipse]
+	customers -> customers_customerid
+	customers_firstname [label=firstname shape=ellipse]
+	customers -> customers_firstname
+	customers_lastname [label=lastname shape=ellipse]
+	customers -> customers_lastname
+	customers_email [label=email shape=ellipse]
+	customers -> customers_email
+	customers_phone [label=phone shape=ellipse]
+	customers -> customers_phone
+	customers_address [label=address shape=ellipse]
+	customers -> customers_address
+	orders [label=orders]
+	orders_orderid [label=orderid shape=ellipse]
+	orders -> orders_orderid
+	orders_customerid [label=customerid shape=ellipse]
+	orders -> orders_customerid
+	orders_orderdate [label=orderdate shape=ellipse]
+	orders -> orders_orderdate
+	orders_totalamount [label=totalamount shape=ellipse]
+	orders -> orders_totalamount
+	orderdetails [label=orderdetails]
+	orderdetails_orderdetailid [label=orderdetailid shape=ellipse]
+	orderdetails -> orderdetails_orderdetailid
+	orderdetails_orderid [label=orderid shape=ellipse]
+	orderdetails -> orderdetails_orderid
+	orderdetails_productid [label=productid shape=ellipse]
+	orderdetails -> orderdetails_productid
+	orderdetails_quantity [label=quantity shape=ellipse]
+	orderdetails -> orderdetails_quantity
+	orderdetails_price [label=price shape=ellipse]
+	orderdetails -> orderdetails_price
+	products [label=products]
+	products_productid [label=productid shape=ellipse]
+	products -> products_productid
+	products_productname [label=productname shape=ellipse]
+	products -> products_productname
+	products_category [label=category shape=ellipse]
+	products -> products_category
+	products_price [label=price shape=ellipse]
+	products -> products_price
+	products_stockquantity [label=stockquantity shape=ellipse]
+	products -> products_stockquantity
+	orders -> customers [label=customerid]
+	orderdetails -> orders [label=orderid]
+	orderdetails -> products [label=productid]
+}
