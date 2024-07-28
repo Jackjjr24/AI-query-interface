@@ -12,20 +12,24 @@ from langchain_community.utilities import SQLDatabase
 from langchain_core.output_parsers import StrOutputParser
 from langchain_groq import ChatGroq
 import threading
-from sqlalchemy import create_engine, inspect
-from graphviz import Digraph
+from sqlalchemy import create_engine, inspect, text, MetaData
+import psycopg2
+from psycopg2 import sql
 import pyrebase
+from graphviz import Digraph
+import subprocess
+import shutil
 
-# Load environment variables from .env file
+
 load_dotenv()
 
-# Ensure the API key is loaded
+
 groq_api_key = os.getenv('GROQ_API_KEY')
 if not groq_api_key:
     st.error("GROQ_API_KEY is not set in the environment variables. Please check your .env file.")
     st.stop()
 
-# Firebase configuration
+
 firebase_config = {
     "apiKey": "AIzaSyCjzREVSettxKtv12WsqQBToCY4_Sb1d38",
     "authDomain": "aiquery-ca10a.firebaseapp.com",
@@ -37,25 +41,29 @@ firebase_config = {
     "databaseURL": "https://aiquery-ca10a.firebaseio.com"
 }
 
-# Initialize Pyrebase
+
 firebase = pyrebase.initialize_app(firebase_config)
 auth = firebase.auth()
 
-# Initialize TTS engine
+
 tts_engine = pyttsx3.init()
 
 def speak_text(text):
-    def run_tts():
-        try:
-            tts_engine.setProperty('rate', 150)  # Set speech rate
-            tts_engine.setProperty('volume', 1)  # Set volume
+    try:
+        tts_engine.setProperty('rate', 150)  
+        tts_engine.setProperty('volume', 1)  
+        tts_engine.say(text)
+        tts_engine.runAndWait()
+        tts_engine.endLoop()  
+    except RuntimeError as e:
+        if str(e) == "run loop already started":
+            tts_engine.endLoop()
             tts_engine.say(text)
             tts_engine.runAndWait()
-        except Exception as e:
+        else:
             st.error(f"Error in TTS: {e}")
-
-    # Run TTS in a separate thread
-    tts_thread = threading.Thread(target=run_tts)
+    
+    tts_thread = threading.Thread(target=lambda: speak_text(text))
     tts_thread.start()
 
 def init_database(db_type: str, user: str, password: str, host: str, port: str, database: str):
@@ -92,7 +100,6 @@ def get_sql_chain(db, db_type):
 
     prompt = ChatPromptTemplate.from_template(template)
     
-    # Pass the API key directly to ChatGroq
     llm = ChatGroq(model="mixtral-8x7b-32768", temperature=0, groq_api_key=groq_api_key)
     
     def get_schema(_):
@@ -137,31 +144,50 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list, db_type: 
         "chat_history": chat_history,
     })
 
+def create_database(db_type: str, user: str, password: str, host: str, port: str, database_name: str):
+    try:
+        if db_type == "MySQL":
+            import mysql.connector
+            conn = mysql.connector.connect(user=user, password=password, host=host, port=port)
+            cursor = conn.cursor()
+            cursor.execute(f"CREATE DATABASE {database_name}")
+            conn.commit()
+            cursor.close()
+            conn.close()
+        elif db_type == "PostgreSQL":
+            conn = psycopg2.connect(dbname='postgres', user=user, password=password, host=host, port=port)
+            conn.autocommit = True
+            cursor = conn.cursor()
+            cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+            cursor.close()
+            conn.close()
+        else:
+            raise ValueError("Unsupported database type")
+        
+        st.success(f"Database '{database_name}' created successfully!")
+    except Exception as e:
+        st.error(f"Error creating database: {e}")
+
 def generate_er_diagram(db_uri: str, output_file: str = "er_diagram"):
     try:
-        engine = create_engine(db_uri)
+        engine = create_engine(db_uri, pool_pre_ping=True)
         inspector = inspect(engine)
         
         dot = Digraph(format='png')
 
-        # Add tables as nodes
         for table_name in inspector.get_table_names():
             dot.node(table_name, table_name)
             
-            # Add columns as labels
             for column in inspector.get_columns(table_name):
                 dot.node(f"{table_name}_{column['name']}", column['name'], shape='ellipse')
                 dot.edge(table_name, f"{table_name}_{column['name']}")
                 
-        # Add relationships
         for table_name in inspector.get_table_names():
             foreign_keys = inspector.get_foreign_keys(table_name)
             for fk in foreign_keys:
                 for column_name in fk['constrained_columns']:
-                    # Add an edge from the current table to the referenced table
                     dot.edge(table_name, fk['referred_table'], label=column_name)
         
-        # Render and save the diagram
         file_path = dot.render(filename=output_file, format='png', cleanup=False)
         if os.path.exists(file_path):
             return file_path
@@ -172,214 +198,324 @@ def generate_er_diagram(db_uri: str, output_file: str = "er_diagram"):
         st.error(f"Error generating ER diagram: {e}")
         return None
 
-def save_log(username, prompt, response):
-    log_file_path = "logs/query_logs.csv"
+def save_log(email, prompt, response):
+    log_dir = "logs"
+    log_file_path = os.path.join(log_dir, "query_logs.csv")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     log_entry = pd.DataFrame([{
-        "Username": username,
+        "Email": email,
         "DateTime": timestamp,
         "Prompt": prompt,
         "Response": response
     }])
     
-    # Check if the log file already exists
+    os.makedirs(log_dir, exist_ok=True)
+    
     if os.path.exists(log_file_path):
-        # Append to the existing file
         log_entry.to_csv(log_file_path, mode='a', header=False, index=False)
     else:
-        # Create a new file with headers
         log_entry.to_csv(log_file_path, mode='w', header=True, index=False)
 
-# Export logs function
 def export_logs():
     log_file_path = "logs/query_logs.csv"
     if os.path.exists(log_file_path):
-        with open(log_file_path, "rb") as file:
-            btn = st.download_button(
-                label="Download Logs",
-                data=file,
-                file_name="query_logs.csv",
-                mime="text/csv",
-            )
+        with open(log_file_path, "rb") as f:
+            st.download_button(label="Download Logs", data=f, file_name="query_logs.csv")
     else:
-        st.warning("No logs available to download.")
+        st.warning("No logs found.")
 
-# Set up Streamlit page
-st.set_page_config(page_title="AI Powered Query Interface", page_icon=":robot:")
+def recognize_speech():
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        st.write("Listening...")
+        audio = recognizer.listen(source)
+    try:
+        return recognizer.recognize_google(audio)
+    except sr.UnknownValueError:
+        return "Sorry, I did not understand that."
+    except sr.RequestError:
+        return "Sorry, there was an error with the speech recognition service."
 
-# Adding a logo and navigation bar
-st.markdown(
-    """
-    <div>
-        <h2>AI Powered Query Interface</h2>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-# Initialize session state variables
-if "db" not in st.session_state:
-    st.session_state["db"] = None
-
-if "db_uri" not in st.session_state:
-    st.session_state["db_uri"] = None
-
-if "db_type" not in st.session_state:
-    st.session_state["db_type"] = None
-
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-
-if "chat_history" not in st.session_state:
-    st.session_state["chat_history"] = []
-
-if "voice_output" not in st.session_state:
-    st.session_state["voice_output"] = False
-
-if "email" not in st.session_state:
-    st.session_state["email"] = ""
-
-# Sidebar content
-with st.sidebar:
-    st.title("Database Connection")
+def execute_sql_file(connection, sql_file):
+    cursor = connection.cursor()
+    with open(sql_file, 'r') as file:
+        sql_content = file.read()
     
-    db_type = st.selectbox("Select Database Type", ["MySQL", "PostgreSQL"], key="db_type")
-
-    if db_type == "MySQL":
-        st.text_input("MySQL Host", value="127.0.0.1", key="mysql_host")
-        st.text_input("MySQL Port", value="3306", key="mysql_port")
-        st.text_input("MySQL Username", value="root", key="mysql_user")
-        st.text_input("MySQL Password", type="password", key="mysql_password")
-        st.text_input("MySQL Database", key="mysql_database")
-    elif db_type == "PostgreSQL":
-        st.text_input("PostgreSQL Host", value="127.0.0.1", key="pgsql_host")
-        st.text_input("PostgreSQL Port", value="5432", key="pgsql_port")
-        st.text_input("PostgreSQL Username", key="pgsql_user")
-        st.text_input("PostgreSQL Password", type="password", key="pgsql_password")
-        st.text_input("PostgreSQL Database", key="pgsql_database")
-
-    if st.button("Connect to Database"):
-        try:
-            if db_type == "MySQL":
-                db, db_uri = init_database(
-                    db_type="MySQL",
-                    user=st.session_state.mysql_user,
-                    password=st.session_state.mysql_password,
-                    host=st.session_state.mysql_host,
-                    port=st.session_state.mysql_port,
-                    database=st.session_state.mysql_database
-                )
-            elif db_type == "PostgreSQL":
-                db, db_uri = init_database(
-                    db_type="PostgreSQL",
-                    user=st.session_state.pgsql_user,
-                    password=st.session_state.pgsql_password,
-                    host=st.session_state.pgsql_host,
-                    port=st.session_state.pgsql_port,
-                    database=st.session_state.pgsql_database
-                )
-            
-            st.session_state["db"] = db
-            st.session_state["db_uri"] = db_uri
-            st.success(f"Connected to {db_type} database successfully!")
-        except Exception as e:
-            st.error(f"Failed to connect to the database: {e}")
-
-# Main content
-tab1, tab2, tab3, tab4 = st.tabs(["Home", "Query Interface", "ER Diagram", "Export Logs"])
-
-with tab1:
-    st.header("Welcome to the AI Powered Query Interface")
-    st.write("Use this application to interact with your database using natural language queries.")
-    st.markdown(
-"""
-<div>
-    <img src='https://thumbs.dreamstime.com/b/illustration-cloud-server-connected-to-database-miniature-analyst-analysis-data-data-center-concept-based-isometric-design-131817092.jpg' alt='Database Connection' style='width: 500px;'>
-</div>
-""",
- unsafe_allow_html=True
-    )
-
-with tab2:
-    st.header("Query Interface")
+    statements = sql_content.split(';')
     
-    if not st.session_state["authenticated"]:
-        username = st.text_input("Email", key="email")
-        password = st.text_input("Password", type="password", key="password")
+    try:
+        for statement in statements:
+            if statement.strip():
+                cursor.execute(statement)
+        connection.commit()
+        st.success("SQL file executed successfully!")
+    except Exception as e:
+        connection.rollback()
+        st.error(f"Error executing SQL file: {e}")
+    finally:
+        cursor.close()
+
+def create_snapshot(db_uri: str, snapshot_name: str, user: str, password: str, host: str, port: str):
+    try:
+        mysqldump_path = "C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysqldump.exe"
         
-        if st.button("Login"):
-            try:
-                user = auth.sign_in_with_email_and_password(username, password)
-                st.session_state["authenticated"] = True
-                st.session_state["email"] = username
-                st.success("Authentication successful!")
-            except Exception as e:
-                st.error(f"Authentication failed: {e}")
+        if not os.path.isfile(mysqldump_path):
+            st.error(f"mysqldump executable not found at {mysqldump_path}.")
+            return
         
-        if st.button("Register"):
-            try:
-                user = auth.create_user_with_email_and_password(username, password)
-                st.success("Registration successful! You can now login.")
-            except Exception as e:
-                st.error(f"Registration failed: {e}")
-            
-    else:
-        user_query = st.text_input("Enter your query", key="user_query")
-        st.checkbox("Enable Voice Output", key="voice_output")
-
-        if st.button("Submit Query"):
-            if user_query and st.session_state.db:
-                try:
-                    db = st.session_state.db
-                    db_type = st.session_state.db_type
-                    chat_history = st.session_state.chat_history
-                    
-                    response = get_response(user_query, db, chat_history, db_type)
-                    
-                    st.session_state.chat_history.append(HumanMessage(content=user_query))
-                    st.session_state.chat_history.append(AIMessage(content=response))
-                    
-                    st.write(response)
-                    
-                    save_log(st.session_state.email, user_query, response)
-                    
-                    if st.session_state.voice_output:
-                        speak_text(response)
-                except Exception as e:
-                    st.error(f"Failed to process the query: {e}")
-            else:
-                st.warning("Please enter a query and ensure the database is connected.")
-
-        if st.button("🎙 Speak"):
-            recognizer = sr.Recognizer()
-            with sr.Microphone() as source:
-                st.info("Listening...")
-                audio = recognizer.listen(source)
-                try:
-                    user_query = recognizer.recognize_google(audio)
-                    st.session_state.user_query = user_query
-                    st.success(f"You said: {user_query}")
-                except sr.UnknownValueError:
-                    st.error("Google Speech Recognition could not understand audio")
-                except sr.RequestError as e:
-                    st.error(f"Could not request results from Google Speech Recognition service; {e}")
-
-        if st.button("Logout"):
-            st.session_state["authenticated"] = False
-            st.success("Logged out successfully!")
-
-with tab3:
-    st.header("ER Diagram")
-    if st.button("Generate ER Diagram"):
-        db_uri = st.session_state.get("db_uri")
-        if db_uri:
-            file_path = generate_er_diagram(db_uri)
-            if file_path:
-                st.image(file_path, caption="Entity-Relationship Diagram")
+        database_name = db_uri.split('/')[-1]
+        
+        dump_file = f"{snapshot_name}.sql"
+        
+        result = subprocess.run(
+            [mysqldump_path, "-u", user, f"-p{password}", "-h", host, "-P", port, database_name],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=False
+        )
+        
+        with open(dump_file, 'w', encoding='utf-8') as file:
+            file.write(result.stdout)
+        
+        if result.returncode == 0:
+            st.success(f"Snapshot '{snapshot_name}' created successfully!")
         else:
-            st.warning("Please connect to the database first.")
+            st.error(f"Error creating snapshot: {result.stderr}")
+            st.write("stdout:", result.stdout)
+            st.write("stderr:", result.stderr)
+    
+    except Exception as e:
+        st.error(f"Unexpected error: {e}")
 
-with tab4:
-    st.header("Export Logs")
-    export_logs()
+
+
+def list_snapshots():
+    snapshot_files = [f for f in os.listdir('.') if f.endswith('.sql')]
+    return snapshot_files
+
+def restore_snapshot(db_uri: str, snapshot_name: str, user: str, password: str, host: str, port: str):
+    try:
+        dump_file = f"{snapshot_name}"
+
+        if not os.path.isfile(dump_file):
+            st.error(f"Snapshot file '{dump_file}' does not exist.")
+            return
+
+        mysql_path = "C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysql.exe"
+        
+         
+        if not os.path.isfile(mysql_path):
+            st.error(f"mysql executable not found at {mysql_path}.")
+            return
+        
+         
+        database_name = db_uri.split('/')[-1]
+        
+        with open(dump_file, 'r', encoding='utf-8') as file:
+            sql_content = file.read()
+        
+        result = subprocess.run(
+            [mysql_path, "-u", user, f"-p{password}", "-h", host, "-P", port, database_name],
+            input=sql_content, text=True, shell=False, capture_output=True
+        )
+        
+        if result.returncode == 0:
+            st.success(f"Snapshot '{snapshot_name}' restored successfully!")
+        else:
+            st.error(f"Error restoring snapshot: {result.stderr}")
+            st.write("stdout:", result.stdout)
+            st.write("stderr:", result.stderr)
+    
+    except Exception as e:
+        st.error(f"Unexpected error: {e}")
+
+
+
+def main():
+    st.sidebar.title("User Authentication")
+
+    if 'email' not in st.session_state:
+        st.session_state.email = ""
+    
+    if not st.session_state.email:
+        action = st.sidebar.radio("Action", ["Login", "Register"])
+        email = st.sidebar.text_input("Email", "")
+        password = st.sidebar.text_input("Password", "", type="password")
+
+        if action == "Login":
+            if st.sidebar.button("Login"):
+                try:
+                    user = auth.sign_in_with_email_and_password(email, password)
+                    st.sidebar.success("Logged in successfully!")
+                    st.session_state.email = email
+                except Exception as e:
+                    st.sidebar.error(f"Login failed: {e}")
+        elif action == "Register":
+            if st.sidebar.button("Register"):
+                try:
+                    auth.create_user_with_email_and_password(email, password)
+                    st.sidebar.success("User registered successfully!")
+                except Exception as e:
+                    st.sidebar.error(f"Registration failed: {e}")
+    else:
+        st.sidebar.write(f"Logged in as {st.session_state.email}")
+        if st.sidebar.button("Logout"):
+            st.session_state.email = ""
+
+        st.sidebar.title("Database Configuration")
+
+        db_type = st.sidebar.selectbox("Select Database Type", ["MySQL", "PostgreSQL"])
+
+        default_mysql = {
+            "host": "127.0.0.1",
+            "port": "3306",
+            "user": "root",
+            "password": "",
+            "database": "client_data_db"
+        }
+        
+        default_postgres = {
+            "host": "127.0.0.1",
+            "port": "5432",
+            "user": "postgres",
+            "password": "",
+            "database": "client_data_db"
+        }
+
+        host, port, user, password, database = "", "", "", "", ""
+
+        if db_type == "MySQL":
+            host = st.sidebar.text_input("Host", default_mysql["host"])
+            port = st.sidebar.text_input("Port", default_mysql["port"])
+            user = st.sidebar.text_input("Username", default_mysql["user"])
+            password = st.sidebar.text_input("Database Password", default_mysql["password"], type="password")
+            database = st.sidebar.text_input("Database", default_mysql["database"])
+        elif db_type == "PostgreSQL":
+            host = st.sidebar.text_input("Host", default_postgres["host"])
+            port = st.sidebar.text_input("Port", default_postgres["port"])
+            user = st.sidebar.text_input("Username", default_postgres["user"])
+            password = st.sidebar.text_input("Database Password", default_postgres["password"], type="password")
+            database = st.sidebar.text_input("Database", default_postgres["database"])
+
+        db_uri = f"{db_type.lower()}+mysqlconnector://{user}:{password}@{host}:{port}/{database}" if db_type == "MySQL" else f"{db_type.lower()}+psycopg2://{user}:{password}@{host}:{port}/{database}"
+
+        if st.sidebar.button("Connect to Database"):
+            try:
+                st.session_state.db, _ = init_database(db_type, user, password, host, port, database)
+                st.session_state.db_uri = db_uri
+                st.success(f"Connected to {db_type} database successfully!")
+            except Exception as e:
+                st.error(f"Error connecting to database: {e}")
+
+        st.sidebar.title("Create Database")
+        with st.sidebar.expander("Create Database"):
+            database_name = st.text_input("New Database Name", "")
+            if st.button("Create Database"):
+                if database_name:
+                    create_database(db_type, user, password, host, port, database_name)
+                else:
+                    st.warning("Please enter a database name.")
+
+    st.sidebar.title("Load Database")
+    with st.sidebar.expander("Load Database"):
+        uploaded_file = st.file_uploader("Choose a .sql file", type=["sql"])
+        if st.button("Load Database"):
+            if uploaded_file is not None:
+                if 'db' in st.session_state and st.session_state.db:
+                    with open("temp.sql", "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    try:
+                        if db_type == "MySQL":
+                            import mysql.connector
+                            connection = mysql.connector.connect(user=user, password=password, host=host, port=port, database=database)
+                            execute_sql_file(connection, "temp.sql")
+                            connection.close()
+                        elif db_type == "PostgreSQL":
+                            connection = psycopg2.connect(user=user, password=password, host=host, port=port, database=database)
+                            execute_sql_file(connection, "temp.sql")
+                            connection.close()
+                        else:
+                            st.error("Unsupported database type")
+                        
+                        st.session_state.db, _ = init_database(db_type, user, password, host, port, database)
+                    except Exception as e:
+                        st.error(f"Error loading database: {e}")
+                    finally:
+                        os.remove("temp.sql")
+                else:
+                    st.error("Database not connected.")
+            else:
+                st.warning("Please upload a .sql file.")
+
+    st.sidebar.title("Database Snapshots")
+    snapshot_action = st.sidebar.selectbox("Action", ["Create Snapshot", "Restore Snapshot"])
+
+    user = st.sidebar.text_input("MySQL Username", "")
+    password = st.sidebar.text_input("MySQL Password", "", type="password")
+    host = st.sidebar.text_input("MySQL Host", "127.0.0.1")
+    port = st.sidebar.text_input("MySQL Port", "3306")
+
+    if snapshot_action == "Create Snapshot":
+        snapshot_name = st.sidebar.text_input("Snapshot Name", "")
+        if st.sidebar.button("Create"):
+            if snapshot_name:
+                create_snapshot(st.session_state.db_uri, snapshot_name, user, password, host, port)
+            else:
+                st.sidebar.error("Please enter a snapshot name.")
+
+    elif snapshot_action == "Restore Snapshot":
+        snapshots = list_snapshots()
+        if snapshots:
+            snapshot_to_restore = st.sidebar.selectbox("Select Snapshot", snapshots)
+            if st.sidebar.button("Restore"):
+                restore_snapshot(st.session_state.db_uri, snapshot_to_restore, user, password, host, port)
+        else:
+            st.sidebar.write("No snapshots available.")
+            
+    st.title("AI-Powered Data Query Interface")
+
+    tab1, tab2, tab3 = st.tabs(["Query Interface", "ER Diagram", "Logs"])
+
+    with tab1:
+        enable_tts = st.checkbox("Enable voice output", value=False)
+
+        query = st.text_input("Enter your query:")
+        submit_button = st.button("Submit")
+
+        if submit_button and query:
+            if 'db' in st.session_state and st.session_state.db:
+                response = get_response(query, st.session_state.db, [], db_type)
+                st.write("Response:", response)
+                if enable_tts:
+                    speak_text(response)
+                save_log(st.session_state.email, query, response)
+            else:
+                st.error("Database not connected.")
+
+        if st.button("Speak"):
+            if 'db' in st.session_state and st.session_state.db:
+                query = recognize_speech()
+                st.text_input("Voice Query:", value=query, key="voice_query")
+                if query:
+                    response = get_response(query, st.session_state.db, [], db_type)
+                    st.write("Response:", response)
+                    if enable_tts:
+                        speak_text(response)
+                    save_log(st.session_state.email, query, response)
+            else:
+                st.error("Database not connected.")
+
+    with tab2:
+        if st.button("Generate ER Diagram"):
+            if 'db' in st.session_state and st.session_state.db:
+                output_file = generate_er_diagram(st.session_state.db_uri)
+                if output_file:
+                    st.image(output_file)
+            else:
+                st.error("Database not connected.")
+
+    with tab3:
+        export_logs()
+
+if __name__ == "__main__":
+    main()
