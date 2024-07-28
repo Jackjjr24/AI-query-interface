@@ -10,4 +10,3 @@ sqlalchemy
 graphviz
 pyrebase4
 psycopg2-binary
-libespeak1
