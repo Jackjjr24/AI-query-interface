@@ -1,0 +1,52 @@
+Email,DateTime,Prompt,Response
+test@gmail.com,2025-04-06 22:38:59,give details about the table abc,"The `abc` table contains the following columns:
+
+- `ID`: An integer that serves as the primary key for the table.
+- `Name`: A variable character field that can hold up to 100 characters.
+
+Currently, there are no rows in the `abc` table."
+test@gmail.com,2025-04-06 22:40:20,give details about the table abc,"The `abc` table contains the following columns:
+
+- `ID`: An integer that serves as the primary key for the table.
+- `Name`: A variable character field that can hold up to 100 characters.
+
+Currently, there are no rows in the `abc` table."
+test@gmail.com,2025-04-06 22:40:46,give details about the table orders,"The `orders` table contains information about customer orders. Here are the details of the orders currently in the table:
+
+1. **OrderID: 1**
+   - **CustomerID:** 1
+   - **OrderDate:** 2023-07-20
+   - **TotalAmount:** $549.98
+
+2. **OrderID: 2**
+   - **CustomerID:** 2
+   - **OrderDate:** 2023-07-21
+   - **TotalAmount:** $499.99
+
+3. **OrderID: 3**
+   - **CustomerID:** 3
+   - **OrderDate:** 2023-07-22
+   - **TotalAmount:** $399.99
+
+Each order is uniquely identified by the `OrderID`, and it includes the `CustomerID` of the customer who placed the order, the date the order was placed, and the total amount of the order."
+test@gmail.com,2025-04-07 22:35:10,give me details about the table students,"Based on the SQL query you ran, here are the details about the `student` table:
+
+The `student` table has the following columns:
+- `stdId`: This is the primary key and is of type INTEGER.
+- `name`: This column stores the name of the student and is of type TEXT.
+- `dept`: This column stores the department of the student and is of type TEXT.
+- `address`: This column stores the address of the student and is of type TEXT.
+- `mobile`: This column stores the mobile number of the student and is of type INTEGER.
+
+The table currently has 3 rows, but the specific data for these rows is not provided in the schema. If you need more detailed information or specific data from this table, please let me know!"
+test@gmail.com,2025-04-07 23:32:15,give me details about the table students,"Based on the SQL query you ran, here are the details about the `student` table:
+
+The `student` table has the following columns:
+- `stdId`: This is the primary key and is of type INTEGER.
+- `name`: This column stores the name of the student and is of type TEXT.
+- `dept`: This column stores the department of the student and is of type TEXT.
+- `address`: This column stores the address of the student and is of type TEXT.
+- `mobile`: This column stores the mobile number of the student and is of type INTEGER.
+
+The table currently has 3 rows, but the specific data for these rows is not provided in the schema. If you need more detailed information or specific data from this table, please let me know!"
+test@gmail.com,2025-04-07 23:32:55,delete table abc,The table `abc` has been successfully deleted from the database.
