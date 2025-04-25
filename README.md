@@ -53,5 +53,7 @@ An intelligent interface that allows users to interact with databases using natu
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/ai-database-query.git
-   cd ai-database-query
+   git clone https://github.com/Jackjjr24/AI-query-interface/
+   cd AI-query-interface
+   pip install -r requirements.txt
+   streamlit run main.py
