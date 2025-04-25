@@ -1,6 +1,6 @@
 # AI-Powered Database Query Interface
 
-![Project Banner](/images/banner.png)
+![Project Banner](https://github.com/Jackjjr24/AI-query-interface/blob/main/images/banner)
 
 An intelligent interface that allows users to interact with databases using natural language queries, powered by AI. The system supports MySQL and PostgreSQL databases, provides visualization tools, and includes user authentication.
 
