@@ -142,6 +142,10 @@ The application will open in your default browser at http://localhost:8501
 
 **Screenshots**
 
+![project image1](https://github.com/Jackjjr24/AI-query-interface/blob/main/images/image1)
+![project image2](https://github.com/Jackjjr24/AI-query-interface/blob/main/images/image2)
+![project image3](https://github.com/Jackjjr24/AI-query-interface/blob/main/images/image3)
+
 
 
 
